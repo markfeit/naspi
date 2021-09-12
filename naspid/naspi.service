@@ -1,0 +1,25 @@
+[Unit]
+Description=Geekworm NASPi Fan and Power Controller
+
+[Service]
+Type=simple
+User=nobody
+#Group=nobody
+PermissionsStartOnly=true
+Restart=always
+RestartSec=3
+
+# Redirections
+StandardOutput=journal
+StandardError=journal
+
+# Start service
+ExecStart=/usr/bin/naspid --config /etc/naspi.conf
+
+# Stop service
+KillMode=process
+TimeoutStopSec=1
+
+[Install]
+WantedBy=multi-user.target
+After=pigpio

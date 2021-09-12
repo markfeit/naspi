@@ -1,12 +1,7 @@
-# naspi
+# NASPi Hardware Information
 
-Services for the Geekworm NASPi enclosure
-
-
-# Hardware Information
 
 ## Fan
-
 
 The fan is on GPIO 18 in PWM out mode with a servo frequency of 25 kHz.
 
@@ -89,3 +84,5 @@ Setting this to `1` appears to tell the controller to boot the Pi next
 time the button is pressed.
 
 For a clean shutdown, set this to `1`, then run `poweroff`.
+
+

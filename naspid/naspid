@@ -1,0 +1,205 @@
+#!/usr/bin/python3
+#
+# Fan and power  controller for Geekworm NASPi Case
+#
+# This requires that /usr/bin/pigpiod is running.
+#
+
+import configparser
+import optparse
+import pigpio
+import sys
+import threading
+import time
+
+#
+# Gargle the arguments
+#
+
+class VerbatimParser(optparse.OptionParser):
+    def format_epilog(self, formatter):
+        return self.epilog
+
+opt_parser = optparse.OptionParser(
+    usage="Usage: %prog host"
+)
+
+opt_parser.disable_interspersed_args()
+
+opt_parser.add_option("--config", "-c",
+                      help="Configure from CONFIG (default /etc/naspid.conf)",
+                      default="/etc/naspid.conf",
+                      action="store", type="string",
+                      dest="config")
+
+opt_parser.add_option("--debug", "-d",
+                      help="Debug to standard error",
+                      action="store_true", default=False,
+                      dest="debug")
+                            
+(options, remaining_args) = opt_parser.parse_args()
+
+if len(remaining_args) != 0:
+    opt_parser.print_usage()
+    exit(1)
+
+#
+# Read and interpret the configuration
+#
+
+config = configparser.ConfigParser()
+config.read(options.config)
+
+fan_interval = 1
+fan_speeds = []
+
+try:
+    sec = "fan"
+    for key in config[sec]:
+        value = config[sec][key]
+        if key == "interval":
+            fan_interval = int(value)
+        try:
+            fan_speeds.append((int(key), int(value)))
+        except ValueError:
+            pass  # TODO: Barf?
+except KeyError:
+    print("Configuration contains no fan section.", file=sys.stderr)
+    exit(1)
+
+
+
+class _Debuggable(object):
+    """
+    Base class for things that want debugging.
+    """
+
+    def __init__(self, debug_callback=None):
+        self.debug_callback = debug_callback if debug_callback is not None else lambda m: None
+
+    def _debug(self, message):
+        self.debug_callback(f"{type(self).__name__}: {message}")
+
+
+
+class NASPiCPUTemp(_Debuggable):
+    """
+    CPU Temperature monitor for Geekworm NASPi with callback on
+    boundary crossings.
+    """
+
+    _TEMP_PATH = "/sys/class/thermal/thermal_zone0/temp"
+
+    def __init__(self, debug=None):
+
+        super().__init__(debug)
+        
+        self.temp_file = open(self._TEMP_PATH, "r")
+        self._debug("Initialized")
+
+    def __call__(self):
+        """
+        Return the CPU temperature in degrees centigrade."
+        """
+
+        self.temp_file.seek(0)
+        # What comes back is in thousandths
+        temp = int(self.temp_file.read()) / 1000.0
+        self._debug(f"Temperature is {temp}C")
+        return temp
+
+
+
+class NASPiFan(_Debuggable):
+
+    """
+    Controller for Geekworm NASPi fan.
+    See https://wiki.geekworm.com/NASPi.
+    """
+    
+    _FAN_SERVO = 18
+    _FAN_SERVO_FREQUENCY = 25000
+
+    def __init__(self,
+                 dry=False,
+                 debug=None
+    ):
+
+        super().__init__(debug)
+
+        self.dry = dry
+        self.fan_speed = None
+
+        if dry:
+            self._debug("Running dry")
+        else:
+            self.pwm = pigpio.pi()
+            self.pwm.set_mode(self._FAN_SERVO, pigpio.OUTPUT)
+            self.pwm.set_PWM_frequency(self._FAN_SERVO, self._FAN_SERVO_FREQUENCY)
+            self.pwm.set_PWM_range(self._FAN_SERVO, 100)
+        
+        self.speed(0)
+        self._debug("Initialized")
+
+
+    def speed(self, new_speed=None):
+
+        if new_speed is not None:
+            new_speed = int(new_speed)
+            if new_speed < 0 or new_speed > 100:
+                raise ValueError("Fan speed must be in [0..100].")
+            if not self.dry:
+                self.pwm.set_PWM_dutycycle(self._FAN_SERVO, new_speed)
+            self.fan_speed = new_speed
+            self._debug(f"Fan speed set to {new_speed}%")
+
+        return self.fan_speed
+
+
+class NASPiFanController(_Debuggable):
+
+    def __init__(self, fan_speeds=[(0, 50)], interval=5, debug=None):
+
+        super().__init__(debug)
+        
+        self.fan_speeds = sorted(fan_speeds, key=lambda s: s[0], reverse=True)
+        self.interval = interval
+
+        self.temp = NASPiCPUTemp(debug=debug)
+        self.fan = NASPiFan(debug=debug)
+
+        self.thread = threading.Thread(target=self._run)
+        self._debug("Initialized")
+        self.thread.run()
+
+
+    def _run(self):
+        self._debug("Thread running")
+
+        # Make some noise so the world knows we're here
+        self.fan.speed(100)
+        time.sleep(self.interval)
+        
+        while True:
+            temp = self.temp()
+            for target, speed in self.fan_speeds:
+                if temp > target:
+                    self._debug(f"Above {target}")
+                    self.fan.speed(speed)
+                    break
+            time.sleep(self.interval)
+
+
+
+
+# ---------------------------------------------------------------------------
+
+def debug(message):
+    print(message, file=sys.stderr)
+
+fan = NASPiFanController(fan_speeds, fan_interval, debug=debug if options.debug else None)
+# TODO: Power switch controller
+
+while True:
+    time.sleep(600)
+

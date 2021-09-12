@@ -1,0 +1,28 @@
+[Unit]
+Description=Raspberry Pi Remote GPIO Service
+Documentation=man:pigpiod(1)
+
+[Service]
+Type=simple
+User=root
+Group=gpio
+PermissionsStartOnly=true
+PIDFile=/run/pigpgio.pid
+Restart=always
+RestartSec=3
+
+# Redirections
+StandardOutput=journal
+StandardError=journal
+
+# Start service
+EnvironmentFile=-/etc/pigpio.options
+ExecStart=/usr/bin/pigpiod -g
+
+# Stop service
+KillMode=process
+TimeoutStopSec=1
+ExecStopPost=/bin/rm -rf /run/pigpio.pid
+
+[Install]
+WantedBy=multi-user.target
